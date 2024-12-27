@@ -44,7 +44,7 @@ runs:
         gitee_upload_retry_times: ${{ inputs.gitee_upload_retry_times }}
       run: |
         pip install -r "${{ github.action_path }}/requirements.txt"
-        python "${{ github.action_path }}/sync_release.py"
+        python "${{ github.action_path }}/sync_releases.py"
 
 # Ref: https://haya14busa.github.io/github-action-brandings/
 branding:
