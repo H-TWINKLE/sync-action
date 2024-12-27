@@ -27,9 +27,9 @@ def get_releases_by_github(owner, repo):
 def get_releases_by_gitee(owner, repo):
     _url = f'{GITEEE_RELEASES_URL}/{owner}/{repo}/releases'
     r = requests.get(_url, verify=False)
-    _json = r.json()
     if _debug:
-        print(_json)
+        print(f'request {_url} data: {r.text}')
+    _json = r.json()
     return {_['tag_name']: _ for _ in _json}, _url
 
 
