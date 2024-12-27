@@ -12,23 +12,24 @@ GITEEE_RELEASES_URL = "https://gitee.com/api/v5/repos"
 requests.packages.urllib3.disable_warnings()
 ssl._create_default_https_context = ssl._create_unverified_context
 
-_debug = get('debug')
+_debug = get('debug', False)
+_token = get('gitee_token')
 
 
 def get_releases_by_github(owner, repo):
     _url = f'{GITHUB_RELEASES_URL}/{owner}/{repo}/releases'
     r = requests.get(_url, verify=False)
+    if _debug:
+        print(f'request {_url} , data: {r.text}')
     return r.json(), _url
 
 
-"""获取所有的tag"""
-
-
 def get_releases_by_gitee(owner, repo):
+    """获取所有的tag"""
     _url = f'{GITEEE_RELEASES_URL}/{owner}/{repo}/releases'
-    r = requests.get(_url, verify=False)
+    r = requests.get(_url, verify=False, data={'access_token': _token})
     if _debug:
-        print(f'request {_url} data: {r.text}')
+        print(f'request {_url} , data: {r.text}')
     _json = r.json()
     return {_['tag_name']: _ for _ in _json}, _url
 
@@ -36,6 +37,8 @@ def get_releases_by_gitee(owner, repo):
 def get_release_by_github(owner, repo, release_id):
     _url = f'{GITHUB_RELEASES_URL}/{owner}/{repo}/releases/{release_id}'
     req = requests.get(f'{GITHUB_RELEASES_URL}/{owner}/{repo}/releases/{release_id}', verify=False)
+    if _debug:
+        print(f'request {_url} , data: {req.text}')
     _j = req.json()
     return (_j,
             {_['name']: _ for _ in _j['assets']} if 'assets' in _j and len(_j['assets']) > 0 else {},

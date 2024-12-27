@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 # coding:utf-8
-import os, glob
-import requests, json, time
-from requests_toolbelt import MultipartEncoder
+import os
+import time
 from functools import wraps
+
+import requests
+from requests_toolbelt import MultipartEncoder
 
 retry_times = os.environ.get("gitee_upload_retry_times", "0")
 try:
@@ -108,9 +110,11 @@ class Gitee:
             return False, "No 'browser_download_url' in response"
 
 
-def get(key):
+def get(key, default_=None):
     val = os.environ.get(key)
     if not val:
+        if default_:
+            return default_
         raise ValueError(f'{key} not set in the environment')
     return val
 
@@ -127,7 +131,6 @@ def set_result(name, result):
                 delimiter = 'EOF'
                 output.write(f"{name}<<{delimiter}\n{result}\n{delimiter}\n")
                 print(f"{name}<<{delimiter}\n{result}\n{delimiter}\n")
-
 
 # def upload_assets(gitee_files, gitee_client, gitee_repo, gitee_release_id):
 #     result = []
