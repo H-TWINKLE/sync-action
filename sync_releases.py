@@ -22,7 +22,7 @@ _token = get('gitee_token')
 def get_releases_by_github(owner, repo):
     _url = f'{GITHUB_RELEASES_URL}/{owner}/{repo}/releases'
     r = requests.get(_url, verify=False)
-    if _debug:
+    if _debug is True:
         print(f'request {_url} , data: {r.text}')
     return r.json(), _url
 
@@ -31,7 +31,7 @@ def get_releases_by_gitee(owner, repo):
     """获取所有的tag"""
     _url = f'{GITEEE_RELEASES_URL}/{owner}/{repo}/releases'
     r = requests.get(_url, verify=False, data={'access_token': _token})
-    if _debug:
+    if _debug is True:
         print(f'request {_url} , data: {r.text}')
     _json = r.json()
     return {_['tag_name']: _ for _ in _json}, _url
@@ -40,7 +40,7 @@ def get_releases_by_gitee(owner, repo):
 def get_release_by_github(owner, repo, release_id):
     _url = f'{GITHUB_RELEASES_URL}/{owner}/{repo}/releases/{release_id}'
     req = requests.get(f'{GITHUB_RELEASES_URL}/{owner}/{repo}/releases/{release_id}', verify=False)
-    if _debug:
+    if _debug is True:
         print(f'request {_url} , data: {req.text}')
     _j = req.json()
     return (_j,
@@ -129,7 +129,7 @@ def sync_releases():
         raise ValueError('github_repo not exists')
     if gitee_token is None:
         raise ValueError('gitee_token not exists')
-    if _debug:
+    if _debug is True:
         print(f'gitee_owner : {gitee_owner}')
         print(f'gitee_repo : {gitee_repo}')
         print(f'github_owner : {github_owner}')
