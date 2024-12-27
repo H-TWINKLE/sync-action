@@ -96,7 +96,7 @@ def download_file(url, _path, _name):
                     if chunk:  # 检查是否有数据块可读
                         f.write(chunk)  # 将数据块写入本地文件
                         f.flush()  # 刷新缓冲区，确保数据写入磁盘
-            print('文件下载完成！')
+            print(f'文件 {_name} 下载完成！')
             return _file_path
         else:
             print('下载失败，状态码：', response.status_code)
@@ -167,7 +167,7 @@ def gitee_exist_release(_gitee, _hub_release_assets, _tag_name, _gitee_info, git
         if _download_file is None:
             continue
         # 上传文件
-        upload_result = upload_assets(_download_file, _gitee, gitee_repo, _gitee_info['id'])
+        upload_result = upload_assets([_download_file], _gitee, gitee_repo, _gitee_info['id'])
         set_result("download-url", upload_result)
 
 
