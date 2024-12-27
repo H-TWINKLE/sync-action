@@ -12,6 +12,8 @@ GITEEE_RELEASES_URL = "https://gitee.com/api/v5/repos"
 requests.packages.urllib3.disable_warnings()
 ssl._create_default_https_context = ssl._create_unverified_context
 
+_debug = get('debug')
+
 
 def get_releases_by_github(owner, repo):
     _url = f'{GITHUB_RELEASES_URL}/{owner}/{repo}/releases'
@@ -26,6 +28,8 @@ def get_releases_by_gitee(owner, repo):
     _url = f'{GITEEE_RELEASES_URL}/{owner}/{repo}/releases'
     r = requests.get(_url, verify=False)
     _json = r.json()
+    if _debug:
+        print(_json)
     return {_['tag_name']: _ for _ in _json}, _url
 
 

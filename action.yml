@@ -20,6 +20,10 @@ inputs:
   gitee_upload_retry_times:
     description: '上传附件失败后的尝试次数'
     required: false
+  debug:
+    description: '是否开启debug模式'
+    default: false
+    required: false
 
 outputs:
   release-id:

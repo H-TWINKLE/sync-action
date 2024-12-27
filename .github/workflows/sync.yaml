@@ -1,10 +1,14 @@
 name: Release
 
+#on:
+#  schedule:
+#    #schedule build every night
+#    - cron: "0/10 * * * *"
+#  workflow_dispatch:
+
 on:
-  schedule:
-    #schedule build every night
-    - cron: "0/10 * * * *"
-  workflow_dispatch:
+  push:
+    branches: [ master ]
 
 jobs:
   update:
@@ -15,6 +19,7 @@ jobs:
         id: create_release
         uses: h-twinkle/sync-action@master
         with:
+          debug: true
           gitee_owner: Htwinkle
           gitee_repo: sync-repo
           gitee_token: ${{ secrets.gitee_token }}
