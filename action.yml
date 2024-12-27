@@ -1,0 +1,52 @@
+name: 'sync-release-to-gitee'
+description: '同步github releases 到 gitee'
+
+inputs:
+  gitee_owner:
+    description: 'gitee 用户名, 项目URL中可获取'
+    required: true
+  gitee_repo:
+    description: 'gitee 项目名, 项目URL中可获取'
+    required: true
+  gitee_token:
+    description: 'gitee api token'
+    required: true
+  github_owner:
+    description: 'github 用户名, 项目URL中可获取'
+    required: true
+  github_repo:
+    description: 'github 项目名, 项目URL中可获取'
+    required: true
+  gitee_upload_retry_times:
+    description: '上传附件失败后的尝试次数'
+    required: false
+
+outputs:
+  release-id:
+    description: '创建的release的id'
+    value: ${{ steps.release.outputs.release-id }}
+  download-url:
+    description: '附件的下载地址'
+    value: ${{ steps.release.outputs.download-url }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Create release or Upload assets
+      id: release
+      shell: bash
+      env:
+        gitee_owner: ${{ inputs.gitee_owner }}
+        gitee_repo: ${{ inputs.gitee_repo }}
+        gitee_token: ${{ inputs.gitee_token }}
+        github_owner: ${{ inputs.github_owner }}
+        github_repo: ${{ inputs.github_repo }}
+        gitee_upload_retry_times: ${{ inputs.gitee_upload_retry_times }}
+      run: |
+        pip install -r "${{ github.action_path }}/requirements.txt"
+        python "${{ github.action_path }}/sync_release.py"
+
+# Ref: https://haya14busa.github.io/github-action-brandings/
+branding:
+  icon: "square"
+  color: "blue"
