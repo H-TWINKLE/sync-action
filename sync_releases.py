@@ -6,6 +6,9 @@ import requests
 
 from gitee_release import Gitee, get, set_result
 
+# https://gitee.com/api/v5/repos/dromara/mayfly-go/releases/
+# https://api.github.com/repos/rustdesk/rustdesk/releases
+
 GITHUB_RELEASES_URL = "https://api.github.com/repos"
 GITEEE_RELEASES_URL = "https://gitee.com/api/v5/repos"
 

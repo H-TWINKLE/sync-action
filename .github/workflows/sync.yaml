@@ -1,14 +1,16 @@
 name: Release
 
-#on:
-#  schedule:
-#    #schedule build every night
-#    - cron: "0/10 * * * *"
-#  workflow_dispatch:
-
 on:
+  schedule:
+    #schedule build every night
+    # - cron: "0/10 * * * *"
+    - cron: "0 1 * * *"
   push:
     branches: [ master ]
+
+#on:
+#  push:
+#    branches: [ master ]
 
 jobs:
   update:
@@ -19,10 +21,10 @@ jobs:
         id: create_release
         uses: h-twinkle/sync-action@master
         with:
-          debug: true
+          debug: false
           gitee_owner: Htwinkle
           gitee_repo: sync-repo
           gitee_token: ${{ secrets.gitee_token }}
-          github_owner: movsb
-          github_repo: http2tcp
+          github_owner: rustdesk
+          github_repo: rustdesk
           gitee_upload_retry_times: 3
