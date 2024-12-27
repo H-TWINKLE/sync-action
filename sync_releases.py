@@ -123,6 +123,12 @@ def sync_releases():
         raise ValueError('github_repo not exists')
     if gitee_token is None:
         raise ValueError('gitee_token not exists')
+    if _debug:
+        print(f'gitee_owner : {gitee_owner}')
+        print(f'gitee_repo : {gitee_repo}')
+        print(f'github_owner : {github_owner}')
+        print(f'github_repo : {github_repo}')
+        print(f'gitee_token : {gitee_token[0:9] + len(gitee_token[9:]) * "*"}')
     gitee_releases, _tee_url = get_releases_by_gitee(gitee_owner, gitee_repo)
     github_releases, _hub_url = get_releases_by_github(github_owner, github_repo)
     _gitee = Gitee(gitee_owner, gitee_token)

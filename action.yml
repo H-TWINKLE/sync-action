@@ -40,6 +40,7 @@ runs:
       id: release
       shell: bash
       env:
+        debug: ${{ inputs.debug }}
         gitee_owner: ${{ inputs.gitee_owner }}
         gitee_repo: ${{ inputs.gitee_repo }}
         gitee_token: ${{ inputs.gitee_token }}
