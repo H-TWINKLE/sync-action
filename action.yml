@@ -1,4 +1,4 @@
-name: 'sync-release-to-gitee'
+name: 'sync-github-release-to-gitee'
 description: '同步github releases 到 gitee'
 
 inputs:
