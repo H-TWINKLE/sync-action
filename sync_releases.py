@@ -3,6 +3,7 @@ import os
 import ssl
 
 import requests
+from tqdm import tqdm
 
 from gitee_release import Gitee, get_environment_variable, set_action_output
 
@@ -141,6 +142,8 @@ def upload_release_assets(asset_files, gitee_client, gitee_repository, gitee_rel
     upload_results = []
     uploaded_file_paths = set()
     
+    # 收集所有待上传的文件
+    all_files = []
     for file_path_pattern in asset_files:
         file_path_pattern = file_path_pattern.strip()
         # 检查是否使用递归匹配
@@ -150,25 +153,28 @@ def upload_release_assets(asset_files, gitee_client, gitee_repository, gitee_rel
         if len(matched_files) == 0:
             raise ValueError('文件路径模式未匹配到任何文件: ' + file_path_pattern)
             
-        for file_path in matched_files:
-            # 跳过已上传的文件和目录
-            if file_path in uploaded_file_paths or os.path.isdir(file_path):
-                continue
+        all_files.extend(matched_files)
+    
+    # 使用 tqdm 显示上传进度
+    for file_path in tqdm(all_files, desc="上传文件", unit="file"):
+        # 跳过已上传的文件和目录
+        if file_path in uploaded_file_paths or os.path.isdir(file_path):
+            continue
+        
+        # 上传单个文件
+        success, message = gitee_client.upload_asset(
+            gitee_repository, 
+            gitee_release_id,
+            file_name=os.path.basename(file_path), 
+            file_path=file_path
+        )
+        
+        if not success:
+            raise Exception("上传文件附件失败: " + message)
             
-            # 上传单个文件
-            success, message = gitee_client.upload_asset(
-                gitee_repository, 
-                gitee_release_id,
-                file_name=os.path.basename(file_path), 
-                file_path=file_path
-            )
-            
-            if not success:
-                raise Exception("上传文件附件失败: " + message)
-                
-            upload_results.append(message)
-            uploaded_file_paths.add(file_path)
-            
+        upload_results.append(message)
+        uploaded_file_paths.add(file_path)
+        
     return upload_results
 
 
@@ -236,13 +242,19 @@ def download_file_from_url(url, local_directory, filename):
         
         # 检查响应状态码
         if response.status_code == 200:
+            # 获取文件总大小
+            total_size = int(response.headers.get('content-length', 0))
+            
             # 打开本地文件进行写入
             with open(full_file_path, 'wb') as file_handle:
-                # 分块读取文件内容，每次读取 1KB
-                for data_chunk in response.iter_content(chunk_size=1024):
-                    if data_chunk:  # 确保有数据可写入
-                        file_handle.write(data_chunk)  # 将数据块写入本地文件
-                        file_handle.flush()  # 刷新缓冲区，确保数据写入磁盘
+                # 使用 tqdm 显示进度条
+                with tqdm(total=total_size, unit='B', unit_scale=True, desc=filename) as pbar:
+                    # 分块读取文件内容，每次读取 1KB
+                    for data_chunk in response.iter_content(chunk_size=1024):
+                        if data_chunk:  # 确保有数据可写入
+                            file_handle.write(data_chunk)  # 将数据块写入本地文件
+                            file_handle.flush()  # 刷新缓冲区，确保数据写入磁盘
+                            pbar.update(len(data_chunk))  # 更新进度条
             print(f'文件 {filename} 下载完成！')
             return full_file_path
         else:
@@ -291,11 +303,13 @@ def sync_github_releases_to_gitee():
     gitee_releases, gitee_request_url = fetch_gitee_releases(gitee_owner, gitee_repo)
     github_releases, github_request_url = fetch_github_releases(github_owner, github_repo)
     
+    print(f"获取到 {len(github_releases)} 个 GitHub Release 和 {len(gitee_releases)} 个 Gitee Release")
+    
     # 创建 Gitee 客户端实例
     gitee_client = Gitee(gitee_owner, gitee_token)
     
-    # 遍历 GitHub 的每个 Release
-    for github_release in github_releases:
+    # 使用 tqdm 显示同步进度
+    for github_release in tqdm(github_releases, desc="同步 Releases", unit="release"):
         # 跳过没有 tag_name 的 Release
         if 'tag_name' not in github_release:
             continue
@@ -310,6 +324,7 @@ def sync_github_releases_to_gitee():
             
         # 如果 Gitee 上已存在相同标签的 Release，则只同步附件
         if release_tag_name in gitee_releases:
+            print(f'Release {release_tag_name} 已存在，仅同步附件')
             sync_release_assets_only(
                 gitee_client, github_release_assets, release_tag_name, 
                 gitee_releases[release_tag_name], gitee_repo)
@@ -359,10 +374,13 @@ def sync_release_assets_only(gitee_client, github_release_assets, release_tag_na
         asset['name']: asset for asset in gitee_release_info['assets']
     } if 'assets' in gitee_release_info else {}
     
+    print(f"开始同步 {release_tag_name} 的附件，共 {len(github_release_assets)} 个文件")
+    
     # 遍历 GitHub Release 的每个附件
-    for github_asset_filename in github_release_assets:
+    for github_asset_filename in tqdm(github_release_assets, desc=f"同步 {release_tag_name} 附件", unit="file"):
         # 如果 Gitee 上已存在同名附件，则跳过
         if github_asset_filename in gitee_release_assets:
+            print(f"附件 {github_asset_filename} 已存在，跳过")
             continue
             
         github_asset_info = github_release_assets[github_asset_filename]

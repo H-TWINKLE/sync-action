@@ -11,6 +11,7 @@ from functools import wraps
 
 import requests
 from requests_toolbelt import MultipartEncoder
+from tqdm import tqdm
 
 # 从环境变量中获取重试次数，默认为0（不重试）
 gitee_upload_retry_times = os.environ.get("gitee_upload_retry_times", "0")
@@ -203,6 +204,7 @@ class Gitee:
                 fields.append(file_field)
         # 处理单个文件的情况
         elif file_name and file_path:
+            file_size = os.path.getsize(file_path)
             fields = {
                 'access_token': self.token,
                 'file': (file_name, open(file_path, 'rb'), 'application/octet-stream'),
@@ -213,7 +215,24 @@ class Gitee:
             
         multipart_encoder = MultipartEncoder(fields=fields)
         url = f"https://gitee.com/api/v5/repos/{self.owner}/{repo}/releases/{release_id}/attach_files"
-        response = requests.post(url, data=multipart_encoder, headers={'Content-Type': multipart_encoder.content_type})
+        
+        # 创建带进度条的上传包装器
+        with tqdm(total=multipart_encoder.len, unit='B', unit_scale=True, desc=f"上传 {file_name}") as pbar:
+            class ProgressAdapter:
+                def __init__(self, encoder, progress_bar):
+                    self.encoder = encoder
+                    self.progress_bar = progress_bar
+                    self.monitor = MultipartEncoder.Monitor(encoder, self.update_progress)
+                
+                def update_progress(self, monitor):
+                    progress = monitor.bytes_read
+                    self.progress_bar.update(progress - self.progress_bar.n)
+                
+                def __getattr__(self, item):
+                    return getattr(self.monitor, item)
+            
+            progress_monitor = ProgressAdapter(multipart_encoder, pbar)
+            response = requests.post(url, data=progress_monitor, headers={'Content-Type': multipart_encoder.content_type})
         response_data = response.json()
         
         # 检查响应状态码是否表示成功（HTTP 2xx）
