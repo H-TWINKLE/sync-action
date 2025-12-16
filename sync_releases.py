@@ -96,6 +96,31 @@ def fetch_github_release_details(owner, repository, release_id):
     return release_info, assets_dict, request_url
 
 
+def fetch_github_commit_message(owner, repository, commit_sha):
+    """
+    获取 GitHub 特定 commit 的信息和 message
+    
+    Args:
+        owner (str): GitHub 仓库所有者
+        repository (str): GitHub 仓库名称
+        commit_sha (str): Commit SHA
+        
+    Returns:
+        tuple: (commit_message, request_url)
+               - commit_message (str): Commit message
+               - request_url (str): 请求的 URL
+    """
+    request_url = f'{GITHUB_RELEASES_API_BASE_URL}/{owner}/{repository}/commits/{commit_sha}'
+    response = requests.get(request_url, verify=False)
+    
+    if debug_mode:
+        print(f'请求 {request_url} , 返回数据: {response.text}')
+        
+    commit_info = response.json()
+    commit_message = commit_info.get('commit', {}).get('message', '') if isinstance(commit_info, dict) else ''
+    return commit_message, request_url
+
+
 def upload_release_assets(asset_files, gitee_client, gitee_repository, gitee_release_id):
     """
     上传附件到 Gitee Release
@@ -292,11 +317,22 @@ def sync_github_releases_to_gitee():
             
         print(f'成功获取 GitHub Release URL {github_release_url} , 标签为 {github_release_info["tag_name"]}')
         
+        # 处理 Release 描述
+        release_body = github_release.get('body', '')
+        if not release_body:
+            # 如果 Release 没有描述，则从对应的 commit 中获取 commit message 作为描述
+            target_commitish = github_release.get('target_commitish', '')
+            if target_commitish:
+                commit_message, _ = fetch_github_commit_message(github_owner, github_repo, target_commitish)
+                release_body = commit_message if commit_message else '-'
+            else:
+                release_body = '-'
+        
         # 在 Gitee 上创建新的 Release
         gitee_release_id = create_gitee_release(
             gitee_owner, gitee_token, gitee_repo, release_tag_name,
             github_release['name'],
-            github_release['body'],
+            release_body,
             github_release['target_commitish'])
             
         # 如果创建成功，则同步附件
