@@ -1,9 +1,11 @@
 import glob
 import os
 import ssl
+import logging
 
 import requests
 from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 from gitee_release import Gitee, get_environment_variable, set_action_output
 
@@ -21,6 +23,10 @@ ssl._create_default_https_context = ssl._create_unverified_context
 debug_mode = get_environment_variable('debug', False)
 # 从环境变量获取 Gitee 访问令牌
 gitee_access_token = get_environment_variable('gitee_token')
+
+# 配置日志记录
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 
 def fetch_github_releases(owner, repository):
@@ -40,7 +46,7 @@ def fetch_github_releases(owner, repository):
     response = requests.get(request_url, verify=False)
     
     if debug_mode:
-        print(f'请求 {request_url} , 返回数据: {response.text}')
+        logger.debug(f'请求 {request_url} , 返回数据: {response.text}')
         
     return response.json(), request_url
 
@@ -62,7 +68,7 @@ def fetch_gitee_releases(owner, repository):
     response = requests.get(request_url, verify=False, data={'access_token': gitee_access_token})
     
     if debug_mode:
-        print(f'请求 {request_url} , 返回数据: {response.text}')
+        logger.debug(f'请求 {request_url} , 返回数据: {response.text}')
         
     response_json = response.json()
     # 构建以 tag_name 为键的字典
@@ -89,11 +95,14 @@ def fetch_github_release_details(owner, repository, release_id):
     response = requests.get(request_url, verify=False)
     
     if debug_mode:
-        print(f'请求 {request_url} , 返回数据: {response.text}')
+        logger.debug(f'请求 {request_url} , 返回数据: {response.text}')
         
     release_info = response.json()
     # 构建以文件名为键的附件字典
-    assets_dict = {asset['name']: asset for asset in release_info['assets']} if 'assets' in release_info and len(release_info['assets']) > 0 else {}
+    assets_dict = {asset['name']: asset
+                   for asset in release_info['assets']} \
+        if 'assets' in release_info and len(release_info['assets']) > 0 \
+        else {}
     return release_info, assets_dict, request_url
 
 
@@ -115,7 +124,7 @@ def fetch_github_commit_message(owner, repository, commit_sha):
     response = requests.get(request_url, verify=False)
     
     if debug_mode:
-        print(f'请求 {request_url} , 返回数据: {response.text}')
+        logger.debug(f'请求 {request_url} , 返回数据: {response.text}')
         
     commit_info = response.json()
     commit_message = commit_info.get('commit', {}).get('message', '') if isinstance(commit_info, dict) else ''
@@ -156,10 +165,11 @@ def upload_release_assets(asset_files, gitee_client, gitee_repository, gitee_rel
         all_files.extend(matched_files)
     
     # 使用 tqdm 显示上传进度
-    for file_path in tqdm(all_files, desc="上传文件", unit="file"):
-        # 跳过已上传的文件和目录
-        if file_path in uploaded_file_paths or os.path.isdir(file_path):
-            continue
+    with logging_redirect_tqdm():
+        for file_path in tqdm(all_files, desc="上传文件", unit="file"):
+            # 跳过已上传的文件和目录
+            if file_path in uploaded_file_paths or os.path.isdir(file_path):
+                continue
         
         # 上传单个文件
         success, message = gitee_client.upload_asset(
@@ -205,11 +215,11 @@ def create_gitee_release(gitee_owner, gitee_token, gitee_repository,
     )
     
     if success:
-        print(f'创建 Release 成功，Release ID 为 {release_id}')
+        logger.info(f'创建 Release 成功，Release ID 为 {release_id}')
         set_action_output("release-id", release_id)
         return release_id
     else:
-        print("创建 Release 失败: " + release_id)
+        logger.error("创建 Release 失败: " + release_id)
         return None
 
 
@@ -235,7 +245,7 @@ def download_file_from_url(url, local_directory, filename):
             
         # 构建完整的文件路径
         full_file_path = os.path.join(full_directory_path, filename)
-        print(f"准备从 {url} 下载文件到 {full_file_path}")
+        logger.info(f"准备从 {url} 下载文件到 {full_file_path}")
         
         # 发送 GET 请求，使用流式下载
         response = requests.get(url, stream=True, verify=False)
@@ -248,21 +258,22 @@ def download_file_from_url(url, local_directory, filename):
             # 打开本地文件进行写入
             with open(full_file_path, 'wb') as file_handle:
                 # 使用 tqdm 显示进度条
-                with tqdm(total=total_size, unit='B', unit_scale=True, desc=filename) as pbar:
-                    # 分块读取文件内容，每次读取 1KB
-                    for data_chunk in response.iter_content(chunk_size=1024):
-                        if data_chunk:  # 确保有数据可写入
-                            file_handle.write(data_chunk)  # 将数据块写入本地文件
-                            file_handle.flush()  # 刷新缓冲区，确保数据写入磁盘
-                            pbar.update(len(data_chunk))  # 更新进度条
-            print(f'文件 {filename} 下载完成！')
+                with logging_redirect_tqdm():
+                    with tqdm(total=total_size, unit='B', unit_scale=True, desc=filename) as pbar:
+                        # 分块读取文件内容，每次读取 1KB
+                        for data_chunk in response.iter_content(chunk_size=1024):
+                            if data_chunk:  # 确保有数据可写入
+                                file_handle.write(data_chunk)  # 将数据块写入本地文件
+                                file_handle.flush()  # 刷新缓冲区，确保数据写入磁盘
+                                pbar.update(len(data_chunk))  # 更新进度条
+            logger.info(f'文件 {filename} 下载完成！')
             return full_file_path
         else:
-            print('下载失败，状态码：', response.status_code)
+            logger.error('下载失败，状态码：%s', response.status_code)
     except requests.exceptions.RequestException as e:  # 处理网络连接问题和其他HTTP请求错误
-        print('请求错误：', str(e))
+        logger.error('请求错误：%s', str(e))
     except FileNotFoundError as e:  # 处理文件写入错误
-        print('文件写入错误：', str(e))
+        logger.error('文件写入错误：%s', str(e))
     return None
 
 
@@ -293,69 +304,70 @@ def sync_github_releases_to_gitee():
         
     # 调试模式下打印配置信息（部分隐藏 token）
     if debug_mode:
-        print(f'gitee_owner : {gitee_owner}')
-        print(f'gitee_repo : {gitee_repo}')
-        print(f'github_owner : {github_owner}')
-        print(f'github_repo : {github_repo}')
-        print(f'gitee_token : {gitee_token[0:9] + len(gitee_token[9:]) * "*"}')
+        tqdm.write(f'gitee_owner : {gitee_owner}')
+        tqdm.write(f'gitee_repo : {gitee_repo}')
+        tqdm.write(f'github_owner : {github_owner}')
+        tqdm.write(f'github_repo : {github_repo}')
+        tqdm.write(f'gitee_token : {gitee_token[0:9] + len(gitee_token[9:]) * "*"}')
         
     # 获取 Gitee 和 GitHub 的 Release 信息
     gitee_releases, gitee_request_url = fetch_gitee_releases(gitee_owner, gitee_repo)
     github_releases, github_request_url = fetch_github_releases(github_owner, github_repo)
     
-    print(f"获取到 {len(github_releases)} 个 GitHub Release 和 {len(gitee_releases)} 个 Gitee Release")
+    tqdm.write(f"获取到 {len(github_releases)} 个 GitHub Release 和 {len(gitee_releases)} 个 Gitee Release")
     
     # 创建 Gitee 客户端实例
     gitee_client = Gitee(gitee_owner, gitee_token)
     
     # 使用 tqdm 显示同步进度
-    for github_release in tqdm(github_releases, desc="同步 Releases", unit="release"):
-        # 跳过没有 tag_name 的 Release
-        if 'tag_name' not in github_release:
-            continue
+    with logging_redirect_tqdm():
+        for github_release in tqdm(github_releases, desc="同步 Releases", unit="release"):
+            # 跳过没有 tag_name 的 Release
+            if 'tag_name' not in github_release:
+                continue
+                
+            release_tag_name = github_release['tag_name']
+            tqdm.write(f'准备同步 {github_request_url} , 标签为 {release_tag_name}')
             
-        release_tag_name = github_release['tag_name']
-        print(f'准备同步 {github_request_url} , 标签为 {release_tag_name}')
-        
-        github_release_id = github_release['id']
-        # 获取 GitHub Release 的详细信息和附件
-        github_release_info, github_release_assets, github_release_url = fetch_github_release_details(
-            github_owner, github_repo, github_release_id)
+            github_release_id = github_release['id']
+            # 获取 GitHub Release 的详细信息和附件
+            github_release_info, github_release_assets, github_release_url = fetch_github_release_details(
+                github_owner, github_repo, github_release_id)
+                
+            # 如果 Gitee 上已存在相同标签的 Release，则只同步附件
+            if release_tag_name in gitee_releases:
+                tqdm.write(f'Release {release_tag_name} 已存在，仅同步附件')
+                sync_release_assets_only(
+                    gitee_client, github_release_assets, release_tag_name, 
+                    gitee_releases[release_tag_name], gitee_repo)
+                continue
+                
+            tqdm.write(f'成功获取 GitHub Release URL {github_release_url} , 标签为 {github_release_info["tag_name"]}')
             
-        # 如果 Gitee 上已存在相同标签的 Release，则只同步附件
-        if release_tag_name in gitee_releases:
-            print(f'Release {release_tag_name} 已存在，仅同步附件')
-            sync_release_assets_only(
-                gitee_client, github_release_assets, release_tag_name, 
-                gitee_releases[release_tag_name], gitee_repo)
-            continue
+            # 处理 Release 描述
+            release_body = github_release.get('body', '')
+            if not release_body:
+                # 如果 Release 没有描述，则从对应的 commit 中获取 commit message 作为描述
+                target_commitish = github_release.get('target_commitish', '')
+                if target_commitish:
+                    commit_message, _ = fetch_github_commit_message(github_owner, github_repo, target_commitish)
+                    release_body = commit_message if commit_message else '-'
+                else:
+                    release_body = '-'
             
-        print(f'成功获取 GitHub Release URL {github_release_url} , 标签为 {github_release_info["tag_name"]}')
-        
-        # 处理 Release 描述
-        release_body = github_release.get('body', '')
-        if not release_body:
-            # 如果 Release 没有描述，则从对应的 commit 中获取 commit message 作为描述
-            target_commitish = github_release.get('target_commitish', '')
-            if target_commitish:
-                commit_message, _ = fetch_github_commit_message(github_owner, github_repo, target_commitish)
-                release_body = commit_message if commit_message else '-'
-            else:
-                release_body = '-'
-        
-        # 在 Gitee 上创建新的 Release
-        gitee_release_id = create_gitee_release(
-            gitee_owner, gitee_token, gitee_repo, release_tag_name,
-            github_release['name'],
-            release_body,
-            github_release['target_commitish'])
-            
-        # 如果创建成功，则同步附件
-        if gitee_release_id is not None:
-            new_release_info = {"assets": [], 'id': gitee_release_id}
-            sync_release_assets_only(
-                gitee_client, github_release_assets, release_tag_name, 
-                new_release_info, gitee_repo)
+            # 在 Gitee 上创建新的 Release
+            gitee_release_id = create_gitee_release(
+                gitee_owner, gitee_token, gitee_repo, release_tag_name,
+                github_release['name'],
+                release_body,
+                github_release['target_commitish'])
+                
+            # 如果创建成功，则同步附件
+            if gitee_release_id is not None:
+                new_release_info = {"assets": [], 'id': gitee_release_id}
+                sync_release_assets_only(
+                    gitee_client, github_release_assets, release_tag_name, 
+                    new_release_info, gitee_repo)
 
 
 def sync_release_assets_only(gitee_client, github_release_assets, release_tag_name, gitee_release_info, gitee_repo):
@@ -374,34 +386,35 @@ def sync_release_assets_only(gitee_client, github_release_assets, release_tag_na
         asset['name']: asset for asset in gitee_release_info['assets']
     } if 'assets' in gitee_release_info else {}
     
-    print(f"开始同步 {release_tag_name} 的附件，共 {len(github_release_assets)} 个文件")
+    tqdm.write(f"开始同步 {release_tag_name} 的附件，共 {len(github_release_assets)} 个文件")
     
     # 遍历 GitHub Release 的每个附件
-    for github_asset_filename in tqdm(github_release_assets, desc=f"同步 {release_tag_name} 附件", unit="file"):
-        # 如果 Gitee 上已存在同名附件，则跳过
-        if github_asset_filename in gitee_release_assets:
-            print(f"附件 {github_asset_filename} 已存在，跳过")
-            continue
+    with logging_redirect_tqdm():
+        for github_asset_filename in tqdm(github_release_assets, desc=f"同步 {release_tag_name} 附件", unit="file"):
+            # 如果 Gitee 上已存在同名附件，则跳过
+            if github_asset_filename in gitee_release_assets:
+                tqdm.write(f"附件 {github_asset_filename} 已存在，跳过")
+                continue
+                
+            github_asset_info = github_release_assets[github_asset_filename]
+            download_url = github_asset_info['browser_download_url']
             
-        github_asset_info = github_release_assets[github_asset_filename]
-        download_url = github_asset_info['browser_download_url']
-        
-        # 跳过没有下载链接的附件
-        if download_url is None:
-            continue
-            
-        # 从 GitHub 下载附件
-        downloaded_file_path = download_file_from_url(
-            download_url, f'{release_tag_name}', github_asset_filename)
-            
-        # 如果下载失败则跳过
-        if downloaded_file_path is None:
-            continue
-            
-        # 上传附件到 Gitee Release
-        upload_result = upload_release_assets(
-            [downloaded_file_path], gitee_client, gitee_repo, gitee_release_info['id'])
-        set_action_output("download-url", upload_result)
+            # 跳过没有下载链接的附件
+            if download_url is None:
+                continue
+                
+            # 从 GitHub 下载附件
+            downloaded_file_path = download_file_from_url(
+                download_url, f'{release_tag_name}', github_asset_filename)
+                
+            # 如果下载失败则跳过
+            if downloaded_file_path is None:
+                continue
+                
+            # 上传附件到 Gitee Release
+            upload_result = upload_release_assets(
+                [downloaded_file_path], gitee_client, gitee_repo, gitee_release_info['id'])
+            set_action_output("download-url", upload_result)
 
 
 if __name__ == '__main__':

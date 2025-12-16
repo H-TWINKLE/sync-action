@@ -7,11 +7,13 @@ Gitee API 客户端模块
 
 import os
 import time
+import logging
 from functools import wraps
 
 import requests
 from requests_toolbelt import MultipartEncoder
 from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 # 从环境变量中获取重试次数，默认为0（不重试）
 gitee_upload_retry_times = os.environ.get("gitee_upload_retry_times", "0")
@@ -62,14 +64,15 @@ def retry_decorator(max_retries, include_exceptions=None, exclude_exceptions=Non
                 return func(*args, **kwargs)
             except Exception as exception:
                 # 如果是排除的异常或者不是需要包含的异常，则直接抛出
-                if is_excluded_exception(exception, exclude_exceptions) or not is_included_exception(exception, include_exceptions):
+                if (is_excluded_exception(exception, exclude_exceptions) or
+                        not is_included_exception(exception, include_exceptions)):
                     raise exception
                 
                 # 如果没有剩余重试次数，则抛出异常
                 if retries_left == 0:
                     raise exception
                 else:
-                    print('捕获到异常:', exception)
+                    logging.warning('捕获到异常: %s', exception)
                     # 等待指定时间后重试
                     if sleep_interval > 0:
                         time.sleep(sleep_interval)
@@ -200,7 +203,8 @@ class Gitee:
                 file_path_item = file_path_item.strip()
                 if not os.path.isfile(file_path_item):
                     raise ValueError('文件不存在: ' + file_path_item)
-                file_field = ('file', (os.path.basename(file_path_item), open(file_path_item, 'rb'), 'application/octet-stream'))
+                file_field = ('file', (os.path.basename(file_path_item),
+                                       open(file_path_item, 'rb'), 'application/octet-stream'))
                 fields.append(file_field)
         # 处理单个文件的情况
         elif file_name and file_path:
@@ -217,22 +221,24 @@ class Gitee:
         url = f"https://gitee.com/api/v5/repos/{self.owner}/{repo}/releases/{release_id}/attach_files"
         
         # 创建带进度条的上传包装器
-        with tqdm(total=multipart_encoder.len, unit='B', unit_scale=True, desc=f"上传 {file_name}") as pbar:
-            class ProgressAdapter:
-                def __init__(self, encoder, progress_bar):
-                    self.encoder = encoder
-                    self.progress_bar = progress_bar
-                    self.monitor = MultipartEncoder.Monitor(encoder, self.update_progress)
+        with logging_redirect_tqdm():
+            with tqdm(total=multipart_encoder.len, unit='B', unit_scale=True, desc=f"上传 {file_name}") as pbar:
+                class ProgressAdapter:
+                    def __init__(self, encoder, progress_bar):
+                        self.encoder = encoder
+                        self.progress_bar = progress_bar
+                        self.monitor = MultipartEncoder.Monitor(encoder, self.update_progress)
+                    
+                    def update_progress(self, monitor):
+                        progress = monitor.bytes_read
+                        self.progress_bar.update(progress - self.progress_bar.n)
+                    
+                    def __getattr__(self, item):
+                        return getattr(self.monitor, item)
                 
-                def update_progress(self, monitor):
-                    progress = monitor.bytes_read
-                    self.progress_bar.update(progress - self.progress_bar.n)
-                
-                def __getattr__(self, item):
-                    return getattr(self.monitor, item)
-            
-            progress_monitor = ProgressAdapter(multipart_encoder, pbar)
-            response = requests.post(url, data=progress_monitor, headers={'Content-Type': multipart_encoder.content_type})
+                progress_monitor = ProgressAdapter(multipart_encoder, pbar)
+                response = requests.post(url, data=progress_monitor,
+                                         headers={'Content-Type': multipart_encoder.content_type})
         response_data = response.json()
         
         # 检查响应状态码是否表示成功（HTTP 2xx）
@@ -277,14 +283,14 @@ def set_action_output(name, result):
         name (str): 输出变量名称
         result (any): 输出结果值
     """
-    print("result: ", f"{name}={result}")
+    logging.info("result: %s=%s", name, result)
     github_output_path = os.environ.get("GITHUB_OUTPUT")
     if github_output_path:
         with open(github_output_path, 'a', encoding='utf-8') as output_file:
             if '\n' not in str(result):
                 output_file.write(f"{name}={result}\n")
-                print(f"{name}={result}\n")
+                logging.info("%s=%s\n", name, result)
             else:
                 delimiter = 'EOF'
                 output_file.write(f"{name}<<{delimiter}\n{result}\n{delimiter}\n")
-                print(f"{name}<<{delimiter}\n{result}\n{delimiter}\n")
+                logging.info("%s<<%s\n%s\n%s\n", name, delimiter, result, delimiter)
