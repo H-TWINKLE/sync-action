@@ -11,7 +11,7 @@ import logging
 from functools import wraps
 
 import requests
-from requests_toolbelt import MultipartEncoder
+from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
@@ -227,7 +227,7 @@ class Gitee:
                     def __init__(self, encoder, progress_bar):
                         self.encoder = encoder
                         self.progress_bar = progress_bar
-                        self.monitor = MultipartEncoder.Monitor(encoder, self.update_progress)
+                        self.monitor = MultipartEncoderMonitor(encoder, self.update_progress)
                     
                     def update_progress(self, monitor):
                         progress = monitor.bytes_read
