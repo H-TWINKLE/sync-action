@@ -1,64 +1,162 @@
 #!/usr/bin/env python
 # coding:utf-8
+"""
+Gitee API 客户端模块
+提供与 Gitee 平台交互的功能，包括创建 Release 和上传附件等操作
+"""
+
 import os
 import time
+import logging
 from functools import wraps
 
 import requests
-from requests_toolbelt import MultipartEncoder
+from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
+from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
-retry_times = os.environ.get("gitee_upload_retry_times", "0")
+# 从环境变量中获取重试次数，默认为0（不重试）
+gitee_upload_retry_times = os.environ.get("gitee_upload_retry_times", "0")
 try:
-    retry_times = int(retry_times)
+    retry_times = int(gitee_upload_retry_times)
 except:
     retry_times = 0
 
 
-def Retry(retry, include_exceptions=[Exception], exclude_exceptions=[ValueError], sleep=1):
-    def decoratedRetry(func):
-        def checkRun(retry, *args, **kwargs):
+def retry_decorator(max_retries, include_exceptions=None, exclude_exceptions=None, sleep_interval=1):
+    """
+    重试装饰器工厂函数
+    
+    Args:
+        max_retries (int): 最大重试次数
+        include_exceptions (list): 需要捕获并重试的异常类型列表
+        exclude_exceptions (list): 即使发生也不重试的异常类型列表
+        sleep_interval (int): 重试间隔时间（秒）
+    
+    Returns:
+        function: 装饰器函数
+    """
+    if include_exceptions is None:
+        include_exceptions = [Exception]
+    if exclude_exceptions is None:
+        exclude_exceptions = [ValueError]
+
+    def retry_decorator_inner(func):
+        """
+        内部装饰器实现
+        """
+        def execute_with_retry(retries_left, *args, **kwargs):
+            """
+            带重试机制的执行函数
+            
+            Args:
+                retries_left (int): 剩余重试次数
+                *args: 函数参数
+                **kwargs: 函数关键字参数
+            
+            Returns:
+                函数执行结果
+            
+            Raises:
+                Exception: 当超过最大重试次数或遇到排除的异常时抛出
+            """
             try:
                 return func(*args, **kwargs)
-            except Exception as e:
-                if no_catch(e, exclude_exceptions) or not need_catch(e, include_exceptions):
-                    raise e
-                if (retry == 0):
-                    raise e
+            except Exception as exception:
+                # 如果是排除的异常或者不是需要包含的异常，则直接抛出
+                if (is_excluded_exception(exception, exclude_exceptions) or
+                        not is_included_exception(exception, include_exceptions)):
+                    raise exception
+                
+                # 如果没有剩余重试次数，则抛出异常
+                if retries_left == 0:
+                    raise exception
                 else:
-                    print('error catched:', e)
-                    if sleep > 0:
-                        time.sleep(sleep)
-                    return checkRun(retry - 1, *args, **kwargs)
+                    logging.warning('捕获到异常: %s', exception)
+                    # 等待指定时间后重试
+                    if sleep_interval > 0:
+                        time.sleep(sleep_interval)
+                    return execute_with_retry(retries_left - 1, *args, **kwargs)
 
         @wraps(func)
-        def run(*args, **kwargs):
-            return checkRun(retry, *args, **kwargs)
+        def wrapper(*args, **kwargs):
+            """
+            装饰器包装函数
+            """
+            return execute_with_retry(max_retries, *args, **kwargs)
 
-        return run
+        return wrapper
 
-    return decoratedRetry
+    return retry_decorator_inner
 
 
-def need_catch(exception, include_exceptions):
-    for ex in include_exceptions:
-        if isinstance(exception, ex):
+def is_included_exception(exception, include_exceptions):
+    """
+    检查异常是否在包含列表中
+    
+    Args:
+        exception (Exception): 异常实例
+        include_exceptions (list): 包含的异常类型列表
+    
+    Returns:
+        bool: 如果异常类型在列表中返回True，否则返回False
+    """
+    for exception_type in include_exceptions:
+        if isinstance(exception, exception_type):
             return True
     return False
 
 
-def no_catch(exception, exclude_exceptions):
-    for ex in exclude_exceptions:
-        if isinstance(exception, ex):
+def is_excluded_exception(exception, exclude_exceptions):
+    """
+    检查异常是否在排除列表中
+    
+    Args:
+        exception (Exception): 异常实例
+        exclude_exceptions (list): 排除的异常类型列表
+    
+    Returns:
+        bool: 如果异常类型在列表中返回True，否则返回False
+    """
+    for exception_type in exclude_exceptions:
+        if isinstance(exception, exception_type):
             return True
     return False
 
 
 class Gitee:
+    """
+    Gitee API 客户端类
+    提供与 Gitee 平台交互的方法
+    """
+    
     def __init__(self, owner, token):
+        """
+        初始化 Gitee 客户端
+        
+        Args:
+            owner (str): 仓库所有者
+            token (str): Gitee 访问令牌
+        """
         self.owner = owner
         self.token = token
 
     def create_release(self, repo, tag_name, name, body='-', target_commitish='master'):
+        """
+        在 Gitee 仓库中创建一个新的 Release
+        
+        Args:
+            repo (str): 仓库名称
+            tag_name (str): 标签名称
+            name (str): Release 名称
+            body (str): Release 描述信息
+            target_commitish (str): 目标提交分支或 SHA 值
+        
+        Returns:
+            tuple: (success, result) 
+                   - success (bool): 是否成功
+                   - result (str): 成功时为 Release ID，失败时为错误信息
+        """
         url = f'https://gitee.com/api/v5/repos/{self.owner}/{repo}/releases'
         data = {
             'access_token': self.token,
@@ -68,157 +166,131 @@ class Gitee:
             'target_commitish': target_commitish,
         }
         response = requests.post(url, data=data)
-        res = response.json()
+        response_data = response.json()
+        
+        # 检查响应状态码是否表示成功（HTTP 2xx）
         if response.status_code < 200 or response.status_code > 300:
-            return False, res["message"] if "message" in res else f"Response status_code is {response.status_code}"
+            error_message = response_data["message"] if "message" in response_data else f"响应状态码: {response.status_code}"
+            return False, error_message
 
-        if "id" in res:
-            return True, res["id"]
+        # 检查响应中是否包含 ID 字段
+        if "id" in response_data:
+            return True, response_data["id"]
         else:
-            return False, "No 'id' in response"
+            return False, "响应中未包含 'id' 字段"
 
-    @Retry(retry_times)
+    @retry_decorator(retry_times)
     def upload_asset(self, repo, release_id, files=None, file_name=None, file_path=None):
+        """
+        向指定的 Release 上传附件
+        
+        Args:
+            repo (str): 仓库名称
+            release_id (str): Release ID
+            files (list): 文件路径列表
+            file_name (str): 单个文件名称
+            file_path (str): 单个文件路径
+        
+        Returns:
+            tuple: (success, result)
+                   - success (bool): 是否成功
+                   - result (str): 成功时为文件下载链接，失败时为错误信息
+        """
+        # 处理多个文件的情况
         if files:
             fields = [('access_token', self.token)]
-            idx = 1
-            for file_path in files:
-                file_path = file_path.strip()
-                if not os.path.isfile(file_path):
-                    raise ValueError('file_path not exists: ' + file_path)
-                file = ('file', (os.path.basename(file_path), open(file_path, 'rb'), 'application/octet-stream'))
-                idx = idx + 1
-                fields.append(file)
+            for file_path_item in files:
+                file_path_item = file_path_item.strip()
+                if not os.path.isfile(file_path_item):
+                    raise ValueError('文件不存在: ' + file_path_item)
+                file_field = ('file', (os.path.basename(file_path_item),
+                                       open(file_path_item, 'rb'), 'application/octet-stream'))
+                fields.append(file_field)
+        # 处理单个文件的情况
         elif file_name and file_path:
+            file_size = os.path.getsize(file_path)
             fields = {
                 'access_token': self.token,
                 'file': (file_name, open(file_path, 'rb'), 'application/octet-stream'),
             }
+        # 参数校验失败
         else:
-            raise ValueError('files or (file_name and file_path) should not be False at the same time')
-        m = MultipartEncoder(fields=fields)
+            raise ValueError('必须提供 files 或同时提供 file_name 和 file_path 参数')
+            
+        multipart_encoder = MultipartEncoder(fields=fields)
         url = f"https://gitee.com/api/v5/repos/{self.owner}/{repo}/releases/{release_id}/attach_files"
-        response = requests.post(url, data=m, headers={'Content-Type': m.content_type})
-        # print(response.text)
-        res = response.json()
+        
+        # 创建带进度条的上传包装器
+        with logging_redirect_tqdm():
+            with tqdm(total=multipart_encoder.len, unit='B', unit_scale=True, desc=f"上传 {file_name}") as pbar:
+                class ProgressAdapter:
+                    def __init__(self, encoder, progress_bar):
+                        self.encoder = encoder
+                        self.progress_bar = progress_bar
+                        self.monitor = MultipartEncoderMonitor(encoder, self.update_progress)
+                    
+                    def update_progress(self, monitor):
+                        progress = monitor.bytes_read
+                        self.progress_bar.update(progress - self.progress_bar.n)
+                    
+                    def __getattr__(self, item):
+                        return getattr(self.monitor, item)
+                
+                progress_monitor = ProgressAdapter(multipart_encoder, pbar)
+                response = requests.post(url, data=progress_monitor,
+                                         headers={'Content-Type': multipart_encoder.content_type})
+        response_data = response.json()
+        
+        # 检查响应状态码是否表示成功（HTTP 2xx）
         if response.status_code < 200 or response.status_code > 300:
-            return False, res["message"] if "message" in res else f"Response status_code is {response.status_code}"
+            error_message = response_data["message"] if "message" in response_data else f"响应状态码: {response.status_code}"
+            return False, error_message
 
-        if "browser_download_url" in res:
-            return True, res["browser_download_url"]
+        # 检查响应中是否包含下载链接
+        if "browser_download_url" in response_data:
+            return True, response_data["browser_download_url"]
         else:
-            return False, "No 'browser_download_url' in response"
+            return False, "响应中未包含 'browser_download_url' 字段"
 
 
-def get(key, default_=None):
-    val = os.environ.get(key)
-    if not val:
-        if default_:
-            return default_
-        raise ValueError(f'{key} not set in the environment')
-    return val
+def get_environment_variable(key, default_value=None):
+    """
+    从环境变量中获取值
+    
+    Args:
+        key (str): 环境变量键名
+        default_value (any): 默认值
+    
+    Returns:
+        any: 环境变量值或默认值
+    
+    Raises:
+        ValueError: 当环境变量不存在且无默认值时抛出
+    """
+    value = os.environ.get(key)
+    if not value:
+        if default_value is not None:
+            return default_value
+        raise ValueError(f'环境变量 {key} 未设置')
+    return value
 
 
-def set_result(name, result):
-    print("result: ", f"{name}={result}")
-    github_out = os.environ.get("GITHUB_OUTPUT")
-    if github_out:
-        with open(github_out, 'a', encoding='utf-8') as output:
-            if not '\n' in str(result):
-                output.write(f"{name}={result}\n")
-                print(f"{name}={result}\n")
+def set_action_output(name, result):
+    """
+    设置 GitHub Actions 的输出结果
+    
+    Args:
+        name (str): 输出变量名称
+        result (any): 输出结果值
+    """
+    logging.info("result: %s=%s", name, result)
+    github_output_path = os.environ.get("GITHUB_OUTPUT")
+    if github_output_path:
+        with open(github_output_path, 'a', encoding='utf-8') as output_file:
+            if '\n' not in str(result):
+                output_file.write(f"{name}={result}\n")
+                logging.info("%s=%s\n", name, result)
             else:
                 delimiter = 'EOF'
-                output.write(f"{name}<<{delimiter}\n{result}\n{delimiter}\n")
-                print(f"{name}<<{delimiter}\n{result}\n{delimiter}\n")
-
-# def upload_assets(gitee_files, gitee_client, gitee_repo, gitee_release_id):
-#     result = []
-#     uploaded_path = set()
-#     for file_path_pattern in gitee_files:
-#         file_path_pattern = file_path_pattern.strip()
-#         recursive = True if "**" in file_path_pattern else False
-#         files = glob.glob(file_path_pattern, recursive=recursive)
-#         if len(files) == 0:
-#             raise ValueError('file_path_pattern does not match: ' + file_path_pattern)
-#         for file_path in files:
-#             if file_path in uploaded_path or os.path.isdir(file_path):
-#                 continue
-#             success, msg = gitee_client.upload_asset(gitee_repo, gitee_release_id,
-#                                                      file_name=os.path.basename(file_path), file_path=file_path)
-#             if not success:
-#                 raise Exception("Upload file asset failed: " + msg)
-#             result.append(msg)
-#             uploaded_path.add(file_path)
-#     return result
-
-
-# def create_release():
-#     gitee_owner = get('gitee_owner')
-#     gitee_token = get('gitee_token')
-#     gitee_repo = get('gitee_repo')
-#     gitee_tag_name = get('gitee_tag_name')
-#     gitee_release_name = get('gitee_release_name')
-#     gitee_release_body = get('gitee_release_body')
-#     gitee_target_commitish = get('gitee_target_commitish')
-#
-#     gitee_files = os.environ.get('gitee_files')
-#     if gitee_files:
-#         gitee_files = gitee_files.strip().split("\n")
-#     else:
-#         gitee_file_name = os.environ.get('gitee_file_name')
-#         gitee_file_path = os.environ.get('gitee_file_path')
-#         if (gitee_file_name and not gitee_file_path) or (gitee_file_path and not gitee_file_name):
-#             raise ValueError('gitee_file_name and gitee_file_path should be set together')
-#         if gitee_file_path and not os.path.isfile(gitee_file_path):
-#             raise ValueError('gitee_file_path not exists: ' + gitee_file_path)
-#
-#     gitee_client = Gitee(owner=gitee_owner, token=gitee_token)
-#     success, release_id = gitee_client.create_release(repo=gitee_repo, tag_name=gitee_tag_name, name=gitee_release_name,
-#                                                       body=gitee_release_body, target_commitish=gitee_target_commitish)
-#     if success:
-#         print(release_id)
-#         if gitee_files:
-#             upload_assets(gitee_files, gitee_client, gitee_repo, release_id)
-#         elif gitee_file_path:
-#             success, msg = gitee_client.upload_asset(gitee_repo, release_id, file_name=gitee_file_name,
-#                                                      file_path=gitee_file_path)
-#             if not success:
-#                 raise Exception("Upload file asset failed: " + msg)
-#         set_result("release-id", release_id)
-#     else:
-#         raise Exception("Create release failed: " + release_id)
-
-
-# def upload_asset():
-#     gitee_release_id = get('gitee_release_id')
-#     gitee_owner = get('gitee_owner')
-#     gitee_repo = get('gitee_repo')
-#     gitee_token = get('gitee_token')
-#
-#     gitee_files = os.environ.get('gitee_files')
-#
-#     gitee_client = Gitee(owner=gitee_owner, token=gitee_token)
-#     if gitee_files:
-#         gitee_files = gitee_files.strip().split("\n")
-#         result = upload_assets(gitee_files, gitee_client, gitee_repo, gitee_release_id)
-#         set_result("download-url", '\n'.join(result))
-#     else:
-#         gitee_file_name = get('gitee_file_name')
-#         gitee_file_path = get('gitee_file_path')
-#         if gitee_file_path and not os.path.isfile(gitee_file_path):
-#             raise ValueError('gitee_file_path not exists: ' + gitee_file_path)
-#         success, msg = gitee_client.upload_asset(gitee_repo, gitee_release_id, file_name=gitee_file_name,
-#                                                  file_path=gitee_file_path)
-#         if not success:
-#             raise Exception("Upload file asset failed: " + msg)
-#         set_result("download-url", msg)
-
-
-# if __name__ == "__main__":
-#     gitee_release_id = os.environ.get("gitee_release_id")
-#     # print("gitee_release_id: ", gitee_release_id)
-#     if gitee_release_id:
-#         upload_asset()
-#     else:
-#         create_release()
+                output_file.write(f"{name}<<{delimiter}\n{result}\n{delimiter}\n")
+                logging.info("%s<<%s\n%s\n%s\n", name, delimiter, result, delimiter)
